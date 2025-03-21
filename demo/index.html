@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 群聊 & 私聊</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #2C2F33;
+            color: #FFF;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            width: 90vw;
+            max-width: 800px;
+            background: #36393F;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+        }
+        h2 {
+            text-align: center;
+            color: #7289DA;
+        }
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            background: #23272A;
+            border-radius: 5px;
+            padding: 10px;
+        }
+        .message {
+            display: flex;
+            margin: 5px 0;
+            align-items: center;
+        }
+        .message-content {
+            max-width: 70%;
+            padding: 10px;
+            border-radius: 10px;
+            background: #40444B;
+        }
+        .message.user {
+            justify-content: flex-end;
+        }
+        .message.user .message-content {
+            background: #7289DA;
+        }
+        .message.private {
+            background: #F39C12;
+        }
+        input, button, select {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            border: none;
+            font-size: 14px;
+        }
+        input {
+            background: #40444B;
+            color: #FFF;
+        }
+        button {
+            background: #7289DA;
+            color: #FFF;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #677BC4;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>WebSocket 聊天</h2>
+    <input type="text" id="username" placeholder="输入昵称...">
+    <select id="room">
+        <option value="公共群聊">公共群聊</option>
+        <option value="技术交流">技术交流</option>
+        <option value="休闲聊天">休闲聊天</option>
+    </select>
+    <button onclick="joinChat()">加入聊天</button>
+    <div id="chat"></div>
+    <input type="text" id="message" placeholder="输入消息...">
+    <select id="privateUser">
+        <option value="">群聊</option>
+    </select>
+    <button onclick="sendMessage()">发送</button>
+</div>
+
+<script>
+    let ws;
+    let userName;
+    let room;
+    let users = [];
+
+    function joinChat() {
+        userName = document.getElementById("username").value;
+        room = document.getElementById("room").value;
+        if (!userName) {
+            alert("请输入昵称");
+            return;
+        }
+
+        ws = new WebSocket("ws://localhost:3000");
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'join', user: userName, room: room }));
+            let chatBox = document.getElementById("chat");
+            chatBox.innerHTML += `<p style='color:#43B581;'>✅ 欢迎 ${userName} 加入 ${room}！</p>`;
+        };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'userList') {
+                users = data.users;
+                updateUserList();
+            } else if (data.type === 'message' && data.data.user && data.data.message) {
+                let chatBox = document.getElementById("chat");
+                let messageClass = data.data.user === userName ? "user" : "";
+                if (data.data.private) messageClass += " private";
+                let privateTag = data.data.private ? "🔒 [私聊] " : "";
+                chatBox.innerHTML += `<div class='message ${messageClass}'><div class='message-content'><b>${privateTag}${data.data.user}:</b> ${data.data.message}</div></div>`;
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+        };
+    }
+
+    function sendMessage() {
+        const input = document.getElementById("message");
+        if (!input.value.trim()) return;
+        const privateUser = document.getElementById("privateUser").value;
+        const msg = {
+            type: 'message',
+            user: userName,
+            message: input.value,
+            room: room,
+            private: privateUser ? true : false,
+            to: privateUser || null
+        };
+        ws.send(JSON.stringify(msg));
+
+        // 让发送方本人也能立即看到自己的私聊消息
+        if (privateUser) {
+            let chatBox = document.getElementById("chat");
+            chatBox.innerHTML += `<div class='message user private'><div class='message-content'><b>🔒 [私聊] ${userName}:</b> ${input.value}</div></div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+        input.value = "";
+    }
+
+    function updateUserList() {
+        let privateUserSelect = document.getElementById("privateUser");
+        privateUserSelect.innerHTML = '<option value="">群聊</option>';
+        users.forEach(user => {
+            if (user !== userName) {
+                privateUserSelect.innerHTML += `<option value="${user}">${user}</option>`;
+            }
+        });
+    }
+</script>
+</body>
+</html>

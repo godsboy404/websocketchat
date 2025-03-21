@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSocket Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col h-screen">
+<div id="username-modal" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
+  <div class="bg-gray-800 p-6 rounded-lg text-center">
+    <h2 class="text-xl font-bold text-white mb-4">Set Your Username</h2>
+    <input type="text" id="username" placeholder="Enter your username" class="p-2 bg-gray-700 text-white rounded w-full mb-2">
+    <button onclick="setUsername()" class="bg-green-500 px-4 py-2 rounded">Confirm</button>
+  </div>
+</div>
+
+<div class="flex flex-1 h-full">
+  <!-- Sidebar -->
+  <div class="w-1/4 bg-gray-800 p-4">
+    <h2 class="text-xl font-bold">Channels</h2>
+    <ul id="channel-list" class="mt-4 space-y-2">
+      <li class="p-2 bg-gray-700 rounded cursor-pointer" onclick="switchToChannel('general')"># General</li>
+    </ul>
+
+    <h2 class="text-xl font-bold mt-6">Online Users</h2>
+    <ul id="user-list" class="mt-4 space-y-2">
+      <!-- Online users will be added here -->
+    </ul>
+
+    <div class="mt-4">
+      <div id="active-chat-indicator" class="text-sm text-green-400 mb-2 hidden">
+        Chatting with: <span id="active-chat-user"></span>
+        <button onclick="resetActiveChat()" class="ml-2 text-xs bg-red-500 px-2 py-1 rounded">×</button>
+      </div>
+      <button onclick="clearHistory()" class="bg-red-500 px-4 py-2 rounded w-full">Clear Chat</button>
+    </div>
+  </div>
+
+  <!-- Chat Section -->
+  <div class="w-3/4 flex flex-col">
+    <div class="flex-1 p-4 overflow-y-auto space-y-2" id="chat-box"></div>
+    <div class="p-4 bg-gray-800 flex">
+      <input type="text" id="message" placeholder="Type a message..." class="flex-1 p-2 bg-gray-700 text-white rounded" onkeypress="handleKeyPress(event)">
+      <button onclick="sendMessage()" class="ml-2 bg-blue-500 px-4 py-2 rounded">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let stompClient = null;
+  let username = localStorage.getItem("username");
+  let activeChat = {
+    type: "channel", // "channel" or "private"
+    target: "general" // channel name or username
+  };
+  let isConnected = false;
+  let connectionTimeout = null;
+
+  function connect() {
+    if (stompClient !== null && isConnected) {
+      return; // 避免重复连接
+    }
+
+    // Clear any existing connection timeout
+    if (connectionTimeout) {
+      clearTimeout(connectionTimeout);
+    }
+
+    let socket = new WebSocket('wss://vlyjmejpaxnh.sealosbja.site/chat');
+    stompClient = Stomp.over(socket);
+
+    stompClient.connect({}, function (frame) {
+      console.log('Connected: ' + frame);
+      isConnected = true;
+
+      // Subscribe to public messages
+      stompClient.subscribe('/topic/messages', function (message) {
+        let parsedMessage = JSON.parse(message.body);
+        if (activeChat.type === "channel" && activeChat.target === "general") {
+          showMessage(parsedMessage);
+          saveMessage(parsedMessage, "general");
+        }
+      });
+
+      // Subscribe to private messages for this user
+      stompClient.subscribe('/user/' + username + '/private', function (message) {
+        let parsedMessage = JSON.parse(message.body);
+        console.log("Received private message:", parsedMessage);
+
+        // Determine the other user (not the current user)
+        let otherUser = parsedMessage.sender === username ? parsedMessage.recipient : parsedMessage.sender;
+
+        // Show message if currently chatting with this user
+        if (activeChat.type === "private" && activeChat.target === otherUser) {
+          showPrivateMessage(parsedMessage);
+        }
+
+        // Save the message
+        savePrivateMessage(parsedMessage);
+      });
+
+      // Subscribe to user activity events
+      stompClient.subscribe('/topic/user-activity', function (event) {
+        let userEvent = JSON.parse(event.body);
+        showSystemMessage(userEvent.username + " has " +
+                          (userEvent.type === "JOIN" ? "joined" : "left") + " the chat");
+      });
+
+      // Subscribe to online users list updates
+      stompClient.subscribe('/topic/online-users', function (message) {
+        let users = JSON.parse(message.body);
+        updateOnlineUsersList(users);
+      });
+
+      // Send a JOIN event
+      sendJoinEvent("JOIN");
+
+      // Set up ping to keep connection alive
+      startHeartbeat();
+    }, function(error) {
+      console.error('Connection error:', error);
+      isConnected = false;
+
+      // Set a reconnection timeout
+      connectionTimeout = setTimeout(function() {
+        console.log('Attempting to reconnect...');
+        connect();
+      }, 5000);
+    });
+
+    // Handle disconnections
+    socket.onclose = function() {
+      console.log('Connection closed');
+      isConnected = false;
+
+      if (stompClient) {
+        stompClient.disconnect();
+        stompClient = null;
+      }
+
+      // Set a reconnection timeout
+      connectionTimeout = setTimeout(function() {
+        console.log('Attempting to reconnect after disconnection...');
+        connect();
+      }, 5000);
+    };
+  }
+
+  function startHeartbeat() {
+    // Send a heartbeat every 30 seconds to keep connection alive
+    setInterval(function() {
+      if (isConnected && stompClient) {
+        try {
+          // Send a user activity update as heartbeat
+          sendJoinEvent("PING");
+        } catch (e) {
+          console.error('Error sending heartbeat:', e);
+          isConnected = false;
+          connect(); // Try to reconnect
+        }
+      }
+    }, 30000);
+  }
+
+  function setUsername() {
+    let inputName = document.getElementById("username").value.trim();
+    if (inputName) {
+      username = inputName;
+      localStorage.setItem("username", username);
+      document.getElementById("username-modal").classList.add("opacity-0");
+      setTimeout(() => {
+        document.getElementById("username-modal").style.display = "none";
+        connect(); // 连接 WebSocket
+      }, 500);
+    } else {
+      alert("用户名不能为空！");
+    }
+  }
+
+  function sendMessage() {
+    if (!isConnected) {
+      showSystemMessage("You are not connected. Trying to reconnect...");
+      connect();
+      return;
+    }
+
+    let messageContent = document.getElementById("message").value.trim();
+    if (!messageContent) return;
+
+    if (activeChat.type === "channel") {
+      let chatMessage = {
+        user: username,
+        message: messageContent,
+        timestamp: new Date().toLocaleTimeString()
+      };
+      stompClient.send("/app/message", {}, JSON.stringify(chatMessage));
+    } else if (activeChat.type === "private") {
+      sendPrivateMessage(activeChat.target, messageContent);
+    }
+
+    document.getElementById("message").value = "";
+  }
+
+  function sendPrivateMessage(recipient, messageContent) {
+    if (!isConnected) {
+      showSystemMessage("You are not connected. Trying to reconnect...");
+      connect();
+      return;
+    }
+
+    if (!messageContent) {
+      messageContent = document.getElementById("message").value.trim();
+    }
+
+    if (messageContent) {
+      let privateMessage = {
+        sender: username,
+        recipient: recipient,
+        message: messageContent,
+        timestamp: new Date().toLocaleTimeString()
+      };
+      stompClient.send("/app/private-message", {}, JSON.stringify(privateMessage));
+      document.getElementById("message").value = "";
+    }
+  }
+
+  function sendJoinEvent(type) {
+    if (!isConnected && type !== "LEAVE") {
+      connect();
+      return;
+    }
+
+    try {
+      let joinEvent = {
+        username: username,
+        type: type,
+        timestamp: new Date().toLocaleTimeString()
+      };
+      stompClient.send("/app/user-join", {}, JSON.stringify(joinEvent));
+    } catch (e) {
+      console.error('Error sending join event:', e);
+      if (type !== "LEAVE") {
+        isConnected = false;
+        connect(); // Try to reconnect
+      }
+    }
+  }
+
+  function handleKeyPress(event) {
+    if (event.key === "Enter") {
+      sendMessage();
+    }
+  }
+
+  function showMessage(message) {
+    let chatBox = document.getElementById("chat-box");
+    let messageElement = document.createElement("div");
+    messageElement.classList.add("p-3", "mb-2", "rounded-lg", "max-w-lg", "break-words");
+    if (message.user === username) {
+      messageElement.classList.add("bg-blue-500", "text-white", "ml-auto");
+    } else {
+      messageElement.classList.add("bg-gray-700", "mr-auto");
+    }
+    messageElement.innerHTML = `<strong>${message.user}:</strong> ${message.message} <span class='text-sm text-gray-400'>(${message.timestamp})</span>`;
+    chatBox.appendChild(messageElement);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function showPrivateMessage(message) {
+    let chatBox = document.getElementById("chat-box");
+    let messageElement = document.createElement("div");
+    messageElement.classList.add("p-3", "mb-2", "rounded-lg", "max-w-lg", "break-words");
+
+    // Style based on whether this is from the current user or the other user
+    if (message.sender === username) {
+      messageElement.classList.add("bg-purple-600", "text-white", "ml-auto");
+      messageElement.innerHTML = `<span class="text-xs text-purple-200">To ${message.recipient}</span><br>${message.message} <span class='text-sm text-purple-300'>(${message.timestamp})</span>`;
+    } else {
+      messageElement.classList.add("bg-purple-700", "mr-auto");
+      messageElement.innerHTML = `<span class="text-xs text-purple-200">From ${message.sender}</span><br>${message.message} <span class='text-sm text-purple-300'>(${message.timestamp})</span>`;
+    }
+
+    chatBox.appendChild(messageElement);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function showSystemMessage(message) {
+    let chatBox = document.getElementById("chat-box");
+    let messageElement = document.createElement("div");
+    messageElement.classList.add("p-2", "text-center", "text-gray-400", "text-sm");
+    messageElement.textContent = message;
+    chatBox.appendChild(messageElement);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function saveMessage(message, channel) {
+    let channelKey = "chatMessages_" + channel;
+    let messages = JSON.parse(localStorage.getItem(channelKey)) || [];
+    messages.push(message);
+    localStorage.setItem(channelKey, JSON.stringify(messages));
+  }
+
+  function savePrivateMessage(message) {
+    // Save in a conversation with the other user
+    let otherUser = message.sender === username ? message.recipient : message.sender;
+    let conversationKey = "privateChat_" + [username, otherUser].sort().join("_");
+
+    let messages = JSON.parse(localStorage.getItem(conversationKey)) || [];
+    messages.push(message);
+    localStorage.setItem(conversationKey, JSON.stringify(messages));
+  }
+
+  function loadMessages(channel) {
+    let chatBox = document.getElementById("chat-box");
+    chatBox.innerHTML = "";
+
+    if (channel === "general") {
+      let messages = JSON.parse(localStorage.getItem("chatMessages_general")) || [];
+      messages.forEach(showMessage);
+    }
+  }
+
+  function loadPrivateMessages(otherUser) {
+    let chatBox = document.getElementById("chat-box");
+    chatBox.innerHTML = "";
+
+    let conversationKey = "privateChat_" + [username, otherUser].sort().join("_");
+    let messages = JSON.parse(localStorage.getItem(conversationKey)) || [];
+    messages.forEach(showPrivateMessage);
+  }
+
+  function updateOnlineUsersList(users) {
+    let userList = document.getElementById("user-list");
+    userList.innerHTML = "";
+
+    users.forEach(user => {
+      if (user !== username) {
+        let userElement = document.createElement("li");
+        userElement.classList.add("p-2", "bg-gray-700", "rounded", "cursor-pointer", "hover:bg-gray-600");
+        userElement.textContent = user;
+        userElement.onclick = () => startPrivateChat(user);
+        userList.appendChild(userElement);
+      }
+    });
+  }
+
+  function startPrivateChat(otherUser) {
+    activeChat = {
+      type: "private",
+      target: otherUser
+    };
+
+    // Update the UI to show we're in a private chat
+    document.getElementById("active-chat-indicator").classList.remove("hidden");
+    document.getElementById("active-chat-user").textContent = otherUser;
+
+    // Load private messages with this user
+    loadPrivateMessages(otherUser);
+  }
+
+  function switchToChannel(channel) {
+    activeChat = {
+      type: "channel",
+      target: channel
+    };
+
+    // Update the UI
+    document.getElementById("active-chat-indicator").classList.add("hidden");
+
+    // Load channel messages
+    loadMessages(channel);
+  }
+
+  function resetActiveChat() {
+    switchToChannel("general");
+  }
+
+  function clearHistory() {
+    document.getElementById("chat-box").innerHTML = "";
+
+    if (activeChat.type === "channel") {
+      localStorage.removeItem("chatMessages_" + activeChat.target);
+    } else {
+      let conversationKey = "privateChat_" + [username, activeChat.target].sort().join("_");
+      localStorage.removeItem(conversationKey);
+    }
+  }
+
+  window.onload = function() {
+    if (!username) {
+      document.getElementById("username-modal").style.display = "flex";
+    } else {
+      connect();
+      loadMessages("general");
+    }
+  };
+
+  // Send a LEAVE event when the window is closed or navigating away
+  window.addEventListener('beforeunload', function() {
+    if (isConnected && stompClient) {
+      try {
+        sendJoinEvent("LEAVE");
+      } catch (e) {
+        console.error('Error sending leave event:', e);
+      }
+    }
+    localStorage.removeItem("username"); // 退出时清除本地存储
+  });
+</script>
+</body>
+</html>

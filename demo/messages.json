@@ -1,0 +1,169 @@
+[
+  {
+    "user": "用户",
+    "message": "hello"
+  },
+  {
+    "user": "用户",
+    "message": "不是哥们儿"
+  },
+  {
+    "user": "用户",
+    "message": "114514faq"
+  },
+  {
+    "user": "用户",
+    "message": "谭嗣同"
+  },
+  {
+    "type": "join",
+    "user": "bababoy",
+    "room": "技术交流"
+  },
+  {
+    "type": "message",
+    "user": "bababoy",
+    "message": "啊这",
+    "room": "技术交流",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "join",
+    "user": "mutex",
+    "room": "技术交流"
+  },
+  {
+    "type": "message",
+    "user": "mutex",
+    "message": "奥一",
+    "room": "技术交流",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "message",
+    "user": "bababoy",
+    "message": "@mutex 你好",
+    "room": "技术交流",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "join",
+    "user": "test1",
+    "room": "休闲聊天"
+  },
+  {
+    "type": "join",
+    "user": "bababoy",
+    "room": "休闲聊天"
+  },
+  {
+    "type": "join",
+    "user": "wow",
+    "room": "公共群聊"
+  },
+  {
+    "type": "join",
+    "user": "wowo",
+    "room": "公共群聊"
+  },
+  {
+    "type": "join",
+    "user": "全方位枪",
+    "room": "公共群聊"
+  },
+  {
+    "type": "message",
+    "user": "全方位枪",
+    "message": "你谁？",
+    "room": "公共群聊",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "join",
+    "user": "345",
+    "room": "公共群聊"
+  },
+  {
+    "type": "join",
+    "user": "123",
+    "room": "公共群聊"
+  },
+  {
+    "type": "message",
+    "user": "345",
+    "message": "你谁？",
+    "room": "公共群聊",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "message",
+    "user": "123",
+    "message": "@345: 你谁？",
+    "room": "公共群聊",
+    "private": false,
+    "to": null
+  },
+  {
+    "type": "join",
+    "user": "你是谁？",
+    "room": "技术交流"
+  },
+  {
+    "type": "join",
+    "user": "我不是你",
+    "room": "技术交流"
+  },
+  {
+    "type": "join",
+    "user": "啊这",
+    "room": "技术交流"
+  },
+  {
+    "type": "message",
+    "user": "我不是你",
+    "message": "你好？👋",
+    "room": "技术交流",
+    "private": false,
+    "to": null
+  },
+  {
+    "user": "刘备",
+    "message": "桃园三结义",
+    "room": "公共群聊",
+    "private": false,
+    "to": null
+  },
+  {
+    "user": "刘备",
+    "message": "你谁？",
+    "room": "公共群聊",
+    "private": true,
+    "to": "张飞"
+  },
+  {
+    "user": "张飞",
+    "message": "拱远😡",
+    "room": "公共群聊",
+    "private": true,
+    "to": "刘备"
+  },
+  {
+    "user": "啊能",
+    "message": "欸？",
+    "room": "公共群聊",
+    "private": true,
+    "to": "嘚嘚"
+  },
+  {
+    "user": "1",
+    "message": "12",
+    "room": "公共群聊",
+    "private": true,
+    "to": "2"
+  }
+]

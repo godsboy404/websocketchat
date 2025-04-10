@@ -59,8 +59,8 @@ public class ChatController {
         // **始终发送用户的消息**
         // simpMessagingTemplate.convertAndSend("/topic/messages", message);
 
-        // **机器人 x% 概率回复**
-        if (random.nextInt(100) < 0) {
+        // **机器人回复概率**
+        if (random.nextInt(100) < 25) {
             ChatMessage botMessage = generateBotReply(message.getMessage());
             simpMessagingTemplate.convertAndSend("/topic/messages", botMessage);
         }
@@ -136,8 +136,8 @@ public class ChatController {
         }
     }
 
-    // 🔥 机器人每 7 秒自动发送一条消息
-    @Scheduled(fixedRate = 7000)
+    // 🔥 机器人每 12 秒自动发送一条消息
+    @Scheduled(fixedRate = 12000)
     public void botAutoMessage() {
         String botRequire = "模拟一个大学生在同学群里聊天，不要打招呼，话不要太多，直接说话！";
         ChatMessage botMessage = generateBotReply(botRequire);

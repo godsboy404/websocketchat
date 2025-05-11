@@ -3,7 +3,14 @@ package com.example.websocketchat.controller;
 import com.example.websocketchat.model.ChatMessage;
 import com.example.websocketchat.model.PrivateChatMessage;
 import com.example.websocketchat.model.UserJoinEvent;
+import com.example.websocketchat.model.glm.GlmApiRequest;
+import com.example.websocketchat.model.glm.GlmApiResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
@@ -13,28 +20,54 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct; // 使用 jakarta 替换 javax
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Controller
 public class ChatController {
 
+    private static final Logger logger = LoggerFactory.getLogger(ChatController.class);
+
+    // Constants
     private static final String BOT_NAME = "Felina";
-    private static final String API_KEY = "sk-Pq5vKamk5EDpFXPf17A36cFf050c422984587f464eBb2b2e"; // ⚠️ 这里替换 API Key
-    private static final String API_ENDPOINT = "https://aiproxy.bja.sealos.run/v1/chat/completions";
+    public static final String SESSION_USERNAME_KEY = "username"; // 在WebSocketEventListener中也可能用到
+    public static final String USER_EVENT_TYPE_JOIN = "JOIN";
+    public static final String USER_EVENT_TYPE_LEAVE = "LEAVE";
+    public static final String USER_EVENT_TYPE_PING = "PING";
 
-    private final WebClient webClient = WebClient.builder()
-            .baseUrl(API_ENDPOINT)
-            .defaultHeader("Authorization", "Bearer " + API_KEY) // 设置 API Key
-            .defaultHeader("Content-Type", "application/json")
-            .build();
+    public static final String TOPIC_MESSAGES = "/topic/messages";
+    public static final String TOPIC_USER_ACTIVITY = "/topic/user-activity";
+    public static final String TOPIC_ONLINE_USERS = "/topic/online-users";
+    public static final String TOPIC_PRIVATE_MESSAGES = "/private"; // 注意在WebSocketConfig中配置的是 /user，这里是目标后缀
 
+    public static final String APP_DESTINATION_PREFIX = "/app"; // 来自WebSocketConfig
+
+    private static final String DEFAULT_BOT_ERROR_MESSAGE = "Oops! I'm having trouble thinking right now. 😅";
+    private static final String DEFAULT_BOT_PARSE_ERROR_MESSAGE = "I don't know what to say! 🤖";
+    private static final long USER_STALE_THRESHOLD_SECONDS = 60;
+    private static final int BOT_REPLY_PROBABILITY_PERCENT = 25; // 25% 机器人回复概率
+
+    @Value("${chat.bot.api.key}")
+    private String apiKey;
+
+    @Value("${chat.bot.api.endpoint}")
+    private String apiEndpoint;
+
+    @Value("${chat.bot.model}")
+    private String botModel;
+
+    private WebClient webClient;
+    private final ObjectMapper objectMapper = new ObjectMapper(); // For JSON processing
     private final Random random = new Random();
+
+    // User presence management - 考虑未来将其提取到专门的服务中
     public static final Set<String> onlineUsers = ConcurrentHashMap.newKeySet();
     public static final Map<String, Instant> lastActiveTime = new ConcurrentHashMap<>();
 
@@ -43,128 +76,175 @@ public class ChatController {
 
     @PostConstruct
     public void init() {
-        // Clear online users when server starts
+        this.webClient = WebClient.builder()
+                .baseUrl(apiEndpoint)
+                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .defaultHeader("Content-Type", "application/json")
+                .build();
         onlineUsers.clear();
         lastActiveTime.clear();
+        logger.info("ChatController initialized. WebClient configured for endpoint: {}", apiEndpoint);
     }
 
-    @MessageMapping("/message")
-    @SendTo("/topic/messages")
-    public ChatMessage sendMessage(ChatMessage message) {
-        System.out.println("📩 用户消息: " + message.getUser() + ": " + message.getMessage());
+    @MessageMapping("/message") // 对应前端 stompClient.send("/app/message", ...)
+    @SendTo(TOPIC_MESSAGES)
+    public ChatMessage sendMessage(ChatMessage message, StompHeaderAccessor headerAccessor) {
+        String username = (String) headerAccessor.getSessionAttributes().get(SESSION_USERNAME_KEY);
+        if (username == null) { // 基本的校验
+            logger.warn("Message received without username in session: {}", message);
+            // 可以选择不处理或返回错误，这里简单地不修改发送者
+        } else {
+            message.setUser(username); // 确保消息的 user 字段是会话中的用户名
+        }
+        message.setTimestamp(Instant.now()); // 设置服务端时间戳
 
-        // Update last active time for this user
+        logger.info("📩 User message: {}: {}", message.getUser(), message.getMessage());
         lastActiveTime.put(message.getUser(), Instant.now());
 
-        // **始终发送用户的消息**
-        // simpMessagingTemplate.convertAndSend("/topic/messages", message);
-
-        // **机器人回复概率**
-        if (random.nextInt(100) < 25) {
-            ChatMessage botMessage = generateBotReply(message.getMessage());
-            simpMessagingTemplate.convertAndSend("/topic/messages", botMessage);
+        if (random.nextInt(100) < BOT_REPLY_PROBABILITY_PERCENT) {
+            generateBotReplyAsync(message.getMessage());
         }
-
-        return message;
+        return message; // 用户消息通过 @SendTo 发送
     }
 
-    @MessageMapping("/private-message")
-    public void sendPrivateMessage(PrivateChatMessage message) {
-        System.out.println("📩 私聊消息: " + message.getSender() + " -> " + message.getRecipient() + ": " + message.getMessage());
+    @MessageMapping("/private-message") // /app/private-message
+    public void sendPrivateMessage(PrivateChatMessage message, StompHeaderAccessor headerAccessor) {
+        String senderUsername = (String) headerAccessor.getSessionAttributes().get(SESSION_USERNAME_KEY);
+        if (senderUsername == null) {
+            logger.warn("Private message received without sender username in session: {}", message);
+            return;
+        }
+        message.setSender(senderUsername); // 确保发送者是会话用户
+        message.setTimestamp(Instant.now());
 
-        // Update last active time for sender
+        logger.info("📩 Private message: {} -> {}: {}", message.getSender(), message.getRecipient(), message.getMessage());
         lastActiveTime.put(message.getSender(), Instant.now());
 
-        // Send to recipient
         simpMessagingTemplate.convertAndSendToUser(
-                message.getRecipient(), "/private", message);
-
-        // Also send a copy back to sender so they can see their own messages
-        simpMessagingTemplate.convertAndSendToUser(
-                message.getSender(), "/private", message);
+                message.getRecipient(), TOPIC_PRIVATE_MESSAGES, message);
+        simpMessagingTemplate.convertAndSendToUser( // 也发回给发送者，以便其UI更新
+                message.getSender(), TOPIC_PRIVATE_MESSAGES, message);
     }
 
-    @MessageMapping("/user-join")
-    @SendTo("/topic/user-activity")
-    public UserJoinEvent userJoin(UserJoinEvent joinEvent) {
-        System.out.println("👤 用户" + (joinEvent.getType().equals("JOIN") ? "加入" : "离开") + ": " + joinEvent.getUsername());
+    @MessageMapping("/user-join") // /app/user-join
+    @SendTo(TOPIC_USER_ACTIVITY)
+    public UserJoinEvent userJoin(UserJoinEvent joinEvent, StompHeaderAccessor headerAccessor) {
+        String username = joinEvent.getUsername();
+        // 将用户名存入WebSocket会话，以便后续使用
+        headerAccessor.getSessionAttributes().put(SESSION_USERNAME_KEY, username);
+        joinEvent.setTimestamp(Instant.now());
 
-        if ("JOIN".equals(joinEvent.getType())) {
-            onlineUsers.add(joinEvent.getUsername());
-            lastActiveTime.put(joinEvent.getUsername(), Instant.now());
-        } else if ("LEAVE".equals(joinEvent.getType())) {
-            onlineUsers.remove(joinEvent.getUsername());
-            lastActiveTime.remove(joinEvent.getUsername());
+        logger.info("👤 User activity: {} {}", username, joinEvent.getType());
+
+        switch (joinEvent.getType()) {
+            case USER_EVENT_TYPE_JOIN:
+                onlineUsers.add(username);
+                lastActiveTime.put(username, Instant.now());
+                break;
+            case USER_EVENT_TYPE_LEAVE:
+                onlineUsers.remove(username);
+                lastActiveTime.remove(username);
+                break;
+            case USER_EVENT_TYPE_PING: // PING仅用于更新活跃时间
+                if (onlineUsers.contains(username)) { // 只更新已加入用户的活跃时间
+                    lastActiveTime.put(username, Instant.now());
+                }
+                // PING 事件不应广播给所有用户，所以这里不返回或返回特定类型
+                // 为了简单，当前@SendTo会广播，前端应忽略PING类型的UserActivity消息的显示
+                break;
+            default:
+                logger.warn("Unknown user event type: {}", joinEvent.getType());
+                return null; // 或者不广播未知类型的事件
         }
 
-        simpMessagingTemplate.convertAndSend("/topic/online-users", new HashSet<>(onlineUsers));
-
+        broadcastOnlineUsers();
         return joinEvent;
     }
 
-    private ChatMessage generateBotReply(String userMessage) {
-        String botResponse = fetchGLM4FlashResponse(userMessage);
-        return new ChatMessage(BOT_NAME, botResponse, new java.text.SimpleDateFormat("HH:mm:ss").format(new java.util.Date()));
+    private void generateBotReplyAsync(String userMessage) {
+        fetchGLMResponse(userMessage)
+                .doOnSuccess(botResponse -> {
+                    ChatMessage botMessage = new ChatMessage(BOT_NAME, botResponse, Instant.now());
+                    simpMessagingTemplate.convertAndSend(TOPIC_MESSAGES, botMessage);
+                    logger.info("🤖 Bot reply sent for user message: {}", userMessage);
+                })
+                .doOnError(error -> logger.error("Error generating bot reply for: {}", userMessage, error))
+                .subscribe();
     }
 
-    // 在这里改模型！！！                         ↓↓↓
-    private String fetchGLM4FlashResponse(String userMessage) {
-        String requestBody = "{ \"model\": \"glm-3-turbo\", \"messages\": [{\"role\": \"user\", \"content\": \"" + userMessage + "\"}] }";
+    private Mono<String> fetchGLMResponse(String userMessage) {
+        GlmApiRequest.MessagePayload payload = new GlmApiRequest.MessagePayload("user", userMessage);
+        GlmApiRequest requestBody = new GlmApiRequest(botModel, Collections.singletonList(payload));
 
-        Mono<String> responseMono = webClient.post()
+        return webClient.post()
                 .bodyValue(requestBody)
                 .retrieve()
-                .bodyToMono(String.class);
+                .bodyToMono(String.class) // 获取原始JSON字符串
+                .map(this::extractGLMReplyFromJsonResponse) // 使用Jackson解析
+                .onErrorResume(e -> {
+                    logger.error("⚠️ GLM API call failed for message \"{}\": {}", userMessage, e.getMessage(), e);
+                    return Mono.just(DEFAULT_BOT_ERROR_MESSAGE);
+                });
+    }
 
+    private String extractGLMReplyFromJsonResponse(String jsonResponse) {
         try {
-            String response = responseMono.block(); // 等待 API 响应
-            System.out.println("🔍 GLM API Response: " + response); // 记录 API 响应
-            return extractGLMReply(response);
-        } catch (Exception e) {
-            System.err.println("⚠️ GLM-4 API 调用失败：" + e.getMessage());
-            return "Oops! I'm having trouble thinking right now. 😅";
-        }
-    }
-
-    private String extractGLMReply(String jsonResponse) {
-        try {
-            int startIndex = jsonResponse.indexOf("\"content\":\"") + 11;
-            int endIndex = jsonResponse.indexOf("\"}", startIndex);
-            return jsonResponse.substring(startIndex, endIndex);
-        } catch (Exception e) {
-            return "I don't know what to say! 🤖";
-        }
-    }
-
-    // 🔥 机器人每 12 秒自动发送一条消息
-    @Scheduled(fixedRate = 12000)
-    public void botAutoMessage() {
-        String botRequire = "模拟一个大学生在同学群里聊天，不要打招呼，话不要太多，直接说话！";
-        ChatMessage botMessage = generateBotReply(botRequire);
-        System.out.println("🤖 AI 机器人自动发言: " + botMessage.getMessage());
-        simpMessagingTemplate.convertAndSend("/topic/messages", botMessage);
-    }
-
-    // Send online users list periodically to handle reconnections
-    @Scheduled(fixedRate = 10000)
-    public void sendOnlineUsersList() {
-        // Remove stale users that haven't had activity for over 1 minute
-        Instant threshold = Instant.now().minusSeconds(60);
-        Set<String> staleUsers = new HashSet<>();
-
-        for (Map.Entry<String, Instant> entry : lastActiveTime.entrySet()) {
-            if (entry.getValue().isBefore(threshold)) {
-                staleUsers.add(entry.getKey());
+            GlmApiResponse response = objectMapper.readValue(jsonResponse, GlmApiResponse.class);
+            if (response != null && response.getChoices() != null && !response.getChoices().isEmpty()) {
+                GlmApiResponse.Message message = response.getChoices().get(0).getMessage();
+                if (message != null && message.getContent() != null) {
+                    return message.getContent();
+                }
             }
+            logger.warn("Could not extract content from GLM API response: {}", jsonResponse);
+            return DEFAULT_BOT_PARSE_ERROR_MESSAGE;
+        } catch (JsonProcessingException e) {
+            logger.error("Error parsing GLM API JSON response: {}", jsonResponse, e);
+            return DEFAULT_BOT_PARSE_ERROR_MESSAGE;
         }
+    }
 
-        // Remove stale users
-        for (String user : staleUsers) {
-            System.out.println("🧹 Removing stale user: " + user);
-            onlineUsers.remove(user);
-            lastActiveTime.remove(user);
+    @Scheduled(fixedRate = 12000) // 🔥 机器人每 12 秒自动发送一条消息
+    public void botAutoMessage() {
+        String botPrompt = "模拟一个大学生在同学群里抛出话题！不要打招呼，话不要太多，直接发言。确保输出不要包含角色扮演的提示或任何markdown格式。";
+        logger.info("🤖 Triggering bot auto message with prompt: {}", botPrompt);
+        fetchGLMResponse(botPrompt)
+                .doOnSuccess(botResponse -> {
+                    if (!DEFAULT_BOT_ERROR_MESSAGE.equals(botResponse) && !DEFAULT_BOT_PARSE_ERROR_MESSAGE.equals(botResponse)) {
+                        ChatMessage botMessage = new ChatMessage(BOT_NAME, botResponse, Instant.now());
+                        logger.info("🤖 AI Bot auto message: {}", botMessage.getMessage());
+                        simpMessagingTemplate.convertAndSend(TOPIC_MESSAGES, botMessage);
+                    } else {
+                        logger.warn("🤖 Bot auto message generation failed or returned error message, not sending.");
+                    }
+                })
+                .doOnError(error -> logger.error("Error in scheduled bot auto message: ", error))
+                .subscribe();
+    }
+
+    @Scheduled(fixedRate = 10000) // 每 10 秒检查一次并发送在线用户列表
+    public void sendOnlineUsersListPeriodically() {
+        Instant threshold = Instant.now().minusSeconds(USER_STALE_THRESHOLD_SECONDS);
+        Set<String> staleUsers = lastActiveTime.entrySet().stream()
+                .filter(entry -> entry.getValue().isBefore(threshold) && onlineUsers.contains(entry.getKey()))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+
+        if (!staleUsers.isEmpty()) {
+            logger.info("🧹 Removing stale users: {}", staleUsers);
+            staleUsers.forEach(user -> {
+                onlineUsers.remove(user);
+                lastActiveTime.remove(user);
+                // 广播用户离开事件
+                UserJoinEvent leaveEvent = new UserJoinEvent(user, USER_EVENT_TYPE_LEAVE, Instant.now());
+                simpMessagingTemplate.convertAndSend(TOPIC_USER_ACTIVITY, leaveEvent);
+            });
         }
+        broadcastOnlineUsers();
+    }
 
-        simpMessagingTemplate.convertAndSend("/topic/online-users", new HashSet<>(onlineUsers));
+    private void broadcastOnlineUsers() {
+        simpMessagingTemplate.convertAndSend(TOPIC_ONLINE_USERS, new HashSet<>(onlineUsers));
+        // logger.debug("Online users broadcasted: {}", onlineUsers); // 可以用debug级别
     }
 }

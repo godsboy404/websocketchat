@@ -1,6 +1,6 @@
 use `mvn clean package` to build.
 
-# WebSocket 聊天应用 [![点击此处了解项目详细信息！](https://deepwiki.com/badge.svg)](https://deepwiki.com/godsboy404/websocketchat)
+# WebSocket 聊天应用 - 点击此处了解项目详细信息→[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/godsboy404/websocketchat)
 
 这是一个基于 WebSocket 的聊天应用，使用 Spring Boot 和 JavaScript 构建。
 

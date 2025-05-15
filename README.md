@@ -1,53 +1,86 @@
 use `mvn clean package` to build.
 
-# WebSocket 聊天应用
-## 点击此处了解项目详细信息→[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/godsboy404/websocketchat)
+# WebSocket Chat Application
+## Access here for more info→[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/godsboy404/websocketchat)
 
-这是一个基于 WebSocket 的聊天应用，使用 Spring Boot 和 JavaScript 构建。
+A real-time chat platform built with Spring Boot, JavaScript, and WebSocket/STOMP, featuring public/private messaging and AI bot integration via the GLM API.
 
-## 功能
+## Relevant Source Files
 
-- 使用 WebSocket 实现实时消息传递
-- 公共和私人聊天功能
-- 机器人回复与 AI 集成
-- 用户加入/离开通知
-- 定期机器人消息
-- 在线用户列表管理
+| File/Path                       | Description                                                    |
+| ------------------------------- | -------------------------------------------------------------- |
+| `WebsocketchatApplication.java` | Main Spring Boot application class: Entry point and scheduling |
+| `WebSocketConfig.java`          | Configures WebSocket endpoints and STOMP                       |
+| `ChatController.java`           | Handles message routing and AI bot communication               |
+| `WebSocketEventListener.java`   | Handles user connection/disconnection events                   |
+| `SecurityConfig.java`           | Secures WebSocket endpoints: Auth & WebSocket security         |
+| `pom.xml`                       | Project dependencies and build configuration                   |
+| `README.md`                     | Project documentation                                          |
 
-## 技术栈
+## Message Flow
 
-- Java
-- Spring Boot
-- JavaScript
-- Maven
-- WebSocket
-- WebClient
+1. User connects via WebSocket.
+2. A JOIN event is broadcast.
+3. Messages are sent:
+    - To /app/message for public
+    - To /app/private-message for private
+4. Server responds:
+    - To /topic/messages for public
+    - To /user/{username}/private for private
+5. Messages may trigger a call to the GLM API for bot replies.
+6. Bot replies are broadcasted similarly.
 
-## 设置
+## System Architecture
 
-1. 克隆仓库：
-    ```sh
-    git clone https://github.com/godsboy404/websocketchat.git
-    cd websocketchat
-    ```
+### Layers
 
-2. 更新 `ChatController.java` 中的 API 密钥：
-    ```java
-    private static final String API_KEY = "your-api-key-here";
-    ```
+- Client Layer: JavaScript Web client, interacts via STOMP over WebSocket.
+- Server Layer: Spring Boot handles real-time messaging, user management, and security.
+- External Services: GLM AI Service for generating bot replies.
 
-3. 使用 Maven 构建项目：
-    ```sh
-    mvn clean install
-    ```
+### Components
 
-4. 运行应用：
-    ```sh
-    mvn spring-boot:run
-    ```
+- Web Browser Client: JavaScript UI with WebSocket connection
+- WebSocketConfig: Defines broker relay and application destination prefixes
+- ChatController: Entry point for all messages
+- GLM API Integration: Uses Spring WebClient to query AI models
+- WebSocketEventListener: Monitors connect/disconnect events
+- SecurityConfig: Manages WebSocket connection authentication
 
-5. 打开浏览器并导航到 `http://localhost:8080` 开始聊天。
+## Key Features
 
-## 许可证
+| Feature                | Description                               |
+| ---------------------- | ----------------------------------------- |
+| Real-time Messaging    | Bi-directional messaging using WebSocket  |
+| Public Chat            | Broadcast to all connected users          |
+| Private Chat           | One-to-one encrypted communication        |
+| Online Presence        | Tracks user join/leave with activity logs |
+| AI Bot Integration     | Responds to user input using GLM API      |
+| Scheduled Bot Messages | Periodic system or bot-generated messages |
 
-此项目使用 MIT 许可证。
+## Tech Stack
+
+Java 21, Spring Boot 3.3.9, Spring WebSocket / STOMP, Spring Security, Spring WebClient, JavaScript (Vanilla/DOM), Maven
+
+## Setup & Deployment
+
+### Prerequisites
+
+Java 21+, Maven 3+, GLM API Key (environment or config)
+
+### Steps
+
+```bash
+# Build
+mvn clean package
+
+# Run
+mvn spring-boot:run
+
+# Access
+http://localhost:8080
+```
+
+## License
+
+This project uses GNU GPL 3.0 License.

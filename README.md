@@ -60,13 +60,13 @@ A real-time chat platform built with Spring Boot, JavaScript, and WebSocket/STOM
 
 ## Tech Stack
 
-Java 21, Spring Boot 3.3.9, Spring WebSocket / STOMP, Spring Security, Spring WebClient, JavaScript (Vanilla/DOM), Maven
+Java 11, Spring Boot 2.7.x, Spring WebSocket / STOMP, Spring Security, Spring WebClient, JavaScript (Vanilla/DOM), Maven
 
 ## Setup & Deployment
 
 ### Prerequisites
 
-Java 21+, Maven 3+, GLM API Key (environment or config)
+Java 11+, Maven 3+, GLM API Key (environment or config)
 
 ### Steps
 

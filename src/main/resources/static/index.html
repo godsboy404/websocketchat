@@ -225,7 +225,7 @@
     }
     clearTimeout(connectionAttemptTimeout);
 
-    const socketUrl = "ws://" + window.location.host + WEBSOCKET_ENDPOINT;  // 强制使用 wss:// 协议
+    const socketUrl = window.location.protocol + '//' + window.location.host + WEBSOCKET_ENDPOINT;  // 使用当前协议
 
     console.log("WebSocket URL:", socketUrl);  // 输出 URL 用于调试
 
@@ -243,6 +243,7 @@
 
       stompClient.subscribe(TOPIC_MESSAGES, (message) => {
         const parsedMessage = JSON.parse(message.body);
+        console.log("Received message:", parsedMessage); // 调试日志
         if (activeChat.type === "channel" && activeChat.target === "general") {
           displayChatMessage(parsedMessage);
         }
@@ -328,7 +329,40 @@
     const payload = activeChat.type === "channel" ?
             { user: currentUsername, message: messageContent } :
             { sender: currentUsername, recipient: activeChat.target, message: messageContent };
+
+    // 发送消息到服务器
     stompClient.send(destination, {}, JSON.stringify(payload));
+
+    // 立即在本地显示消息（不等待服务器响应）
+    if (activeChat.type === "channel") {
+      const localMessage = {
+        user: currentUsername,
+        message: messageContent,
+        timestamp: new Date()
+      };
+      displayChatMessage(localMessage, false);
+
+      // 显示确认消息
+      setTimeout(() => {
+        // 使用系统消息而不是聊天消息
+        showSystemMessage(`服务端响应【${messageContent}】，消息已收到]`);
+      }, 300);
+    } else {
+      const localMessage = {
+        sender: currentUsername,
+        recipient: activeChat.target,
+        message: messageContent,
+        timestamp: new Date()
+      };
+      displayChatMessage(localMessage, true);
+
+      // 显示私聊确认消息
+      setTimeout(() => {
+        // 使用系统消息而不是聊天消息
+        showSystemMessage(`服务端响应:【${messageContent}】，消息已收到]`);
+      }, 300);
+    }
+
     messageInput.value = "";
     messageInput.focus();
   }
@@ -393,16 +427,27 @@
         messageBubble.classList.add("bg-slate-700", "text-slate-200");
       }
     }
-    chatBox.appendChild(messageWrapper);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    // 将消息添加到顶部而不是底部
+    if (chatBox.firstChild) {
+      chatBox.insertBefore(messageWrapper, chatBox.firstChild);
+    } else {
+      chatBox.appendChild(messageWrapper);
+    }
+    chatBox.scrollTop = 0; // 滚动到顶部
   }
 
   function showSystemMessage(text) {
     const msgEl = document.createElement("div");
-    msgEl.classList.add("text-center", "text-xs", "text-slate-500", "my-3", "italic");
+    // 使系统消息更加显眼
+    msgEl.classList.add("text-center", "text-sm", "text-blue-400", "my-3", "italic", "font-medium", "bg-slate-800", "py-2", "rounded-lg", "border", "border-slate-700");
     msgEl.textContent = text;
-    chatBox.appendChild(msgEl);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    // 将系统消息添加到顶部
+    if (chatBox.firstChild) {
+      chatBox.insertBefore(msgEl, chatBox.firstChild);
+    } else {
+      chatBox.appendChild(msgEl);
+    }
+    chatBox.scrollTop = 0; // 滚动到顶部
   }
 
   function updateOnlineUsersList(users) {
@@ -496,7 +541,9 @@
     chatBox.innerHTML = "";
     const key = getStorageKey();
     const messages = JSON.parse(localStorage.getItem(key)) || [];
-    messages.forEach(msg => displayChatMessage(msg, activeChat.type === "private"));
+    // 将消息数组复制并反转，以便最新的消息显示在顶部
+    const reversedMessages = [...messages].reverse();
+    reversedMessages.forEach(msg => displayChatMessage(msg, activeChat.type === "private"));
     if (messages.length === 0) {
       showSystemMessage(activeChat.type === "channel" ? `No messages in #${activeChat.target} yet.` : `No private messages with ${activeChat.target} yet.`);
     }

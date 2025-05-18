@@ -10,10 +10,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .authorizeHttpRequests(auth -> auth
-                        .anyRequest().permitAll()  // 允许所有请求
-                )
-                .csrf(csrf -> csrf.disable()); // 关闭 CSRF 保护
+                .authorizeRequests()
+                .anyRequest().permitAll()  // 允许所有请求
+                .and()
+                .csrf().disable(); // 关闭 CSRF 保护
         return http.build();
     }
 }

@@ -20,7 +20,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import jakarta.annotation.PostConstruct; // 使用 jakarta 替换 javax
+import javax.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
@@ -101,6 +101,10 @@ public class ChatController {
         logger.info("📩 User message: {}: {}", message.getUser(), message.getMessage());
         lastActiveTime.put(message.getUser(), Instant.now());
 
+        // 发送自动回复消息
+        sendAutoReplyMessage(message);
+
+        // 随机生成机器人回复
         if (random.nextInt(100) < BOT_REPLY_PROBABILITY_PERCENT) {
             generateBotReplyAsync(message.getMessage());
         }
@@ -120,10 +124,14 @@ public class ChatController {
         logger.info("📩 Private message: {} -> {}: {}", message.getSender(), message.getRecipient(), message.getMessage());
         lastActiveTime.put(message.getSender(), Instant.now());
 
+        // 发送原始消息
         simpMessagingTemplate.convertAndSendToUser(
                 message.getRecipient(), TOPIC_PRIVATE_MESSAGES, message);
         simpMessagingTemplate.convertAndSendToUser( // 也发回给发送者，以便其UI更新
                 message.getSender(), TOPIC_PRIVATE_MESSAGES, message);
+
+        // 发送自动回复
+        sendPrivateAutoReply(message);
     }
 
     @MessageMapping("/user-join") // /app/user-join
@@ -159,6 +167,32 @@ public class ChatController {
 
         broadcastOnlineUsers();
         return joinEvent;
+    }
+
+    /**
+     * 发送自动回复消息，确认收到用户消息（群聊）
+     */
+    private void sendAutoReplyMessage(ChatMessage originalMessage) {
+        String replyContent = String.format("服务端响应：【%s】，消息已收到]", originalMessage.getMessage());
+        ChatMessage replyMessage = new ChatMessage(BOT_NAME, replyContent, Instant.now());
+        simpMessagingTemplate.convertAndSend(TOPIC_MESSAGES, replyMessage);
+        logger.info("💬 Auto reply sent for message: {}", originalMessage.getMessage());
+    }
+
+    /**
+     * 发送自动回复消息，确认收到用户消息（私聊）
+     */
+    private void sendPrivateAutoReply(PrivateChatMessage originalMessage) {
+        String replyContent = String.format("服务端响应：【%s】，消息已收到]", originalMessage.getMessage());
+        PrivateChatMessage replyMessage = new PrivateChatMessage();
+        replyMessage.setSender(BOT_NAME);
+        replyMessage.setRecipient(originalMessage.getSender());
+        replyMessage.setMessage(replyContent);
+        replyMessage.setTimestamp(Instant.now());
+
+        simpMessagingTemplate.convertAndSendToUser(
+                originalMessage.getSender(), TOPIC_PRIVATE_MESSAGES, replyMessage);
+        logger.info("💬 Private auto reply sent to: {}", originalMessage.getSender());
     }
 
     private void generateBotReplyAsync(String userMessage) {

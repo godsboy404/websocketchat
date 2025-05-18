@@ -49,7 +49,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         logger.info("Registering STOMP endpoint /chat with allowed origins: {}", String.join(", ", allowedOrigins));
         registry.addEndpoint("/chat")
                 .setAllowedOriginPatterns("*")
-                .setAllowedOrigins("*")
                 .withSockJS();
     }
 

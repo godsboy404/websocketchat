@@ -1,7 +1,7 @@
 use `mvn clean package` to build.
 
 # WebSocket Chat Application
-## Access here for more info↓
+## ↓ Access here for more info
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/godsboy404/websocketchat)
 
 A real-time chat platform built with Spring Boot, JavaScript, and WebSocket/STOMP, featuring public/private messaging and AI bot integration via the GLM API.
